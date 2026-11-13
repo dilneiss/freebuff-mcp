@@ -9,6 +9,59 @@ Delegation policy: [skills/freebuff-mcp-default-coder/SKILL.md](skills/freebuff-
 makes this bridge the default coding engine until the user explicitly disables
 it. OMP loads it from `~/.omp/agent/managed-skills/freebuff-mcp-default-coder/SKILL.md`.
 
+## Install in one minute (paste this prompt into your agent)
+
+Hand the block below to any agent that can run shell commands and edit your
+harness' MCP config. It installs the bridge, registers it, and proves it works —
+Windows only, and the Freebuff CLI must already be installed and logged in
+(`npm i -g freebuff`, then `freebuff login`).
+
+```text
+Install and verify the local MCP server "freebuff-mcp" (Windows only). Work end
+to end, then report what you changed. Do not ask questions unless a prerequisite
+check fails.
+
+1. Prerequisites (stop and tell me the failing one):
+   - Windows.
+   - `python --version` is 3.11 or newer.
+   - `%USERPROFILE%\.config\manicode\freebuff.exe` and
+     `%USERPROFILE%\.config\manicode\credentials.json` exist (CLI installed and
+     logged in). If not: `npm i -g freebuff`, then `freebuff login`, then re-run.
+
+2. Code:
+   - If `C:\freebuff-mcp\server.py` is absent:
+     `git clone https://github.com/dilneiss/freebuff-mcp.git C:\freebuff-mcp`
+   - Else: `git -C C:\freebuff-mcp pull --ff-only`
+
+3. Environment (single dependency):
+   `python -m venv C:\freebuff-mcp\.venv`
+   `C:\freebuff-mcp\.venv\Scripts\python.exe -m pip install --quiet pywinpty`
+
+4. Register it as a stdio MCP server in YOUR harness' user-level config:
+   command `C:\freebuff-mcp\.venv\Scripts\python.exe`,
+   args `["C:\freebuff-mcp\server.py"]`, no environment variables.
+   If the harness has a per-request MCP timeout, disable it or raise it above
+   30 minutes (OMP: `"timeout": 0`) — a Freebuff run takes minutes and a 60 s
+   timeout aborts it. Reload/restart the harness' MCP servers afterwards.
+
+5. Verify through the MCP tools, not by reading files:
+   - `freebuff_status` must return `logged_in: true` and a version. If the tool
+     is missing, the config was not picked up: print the config path you edited
+     and stop.
+   - Create `%TEMP%\freebuff-smoke`, then call
+     `freebuff_run` with
+     `{"prompt":"Responda apenas: ponte ok","cwd":"%TEMP%\\freebuff-smoke","timeout_seconds":300}`.
+     Expect `ok: true` and a non-empty `answer`.
+   - Delete `%TEMP%\freebuff-smoke` afterwards.
+
+6. Report: harness name, config file edited, status (version + logged_in), smoke
+   answer + elapsed seconds. On failure, quote the exact error instead of
+   guessing.
+```
+
+After that the agent can delegate work immediately; the delegation policy is in
+[`skills/freebuff-mcp-default-coder/SKILL.md`](skills/freebuff-mcp-default-coder/SKILL.md).
+
 ## Why a TUI bridge
 
 Freebuff is a Bun-compiled, Codebuff-based coding agent. Its only front end is a
