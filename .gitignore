@@ -1,0 +1,17 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.tmp
+*.log
+
+# Freebuff CLI local state
+.freebuff/
+freebuff-mcp-settings-snapshot.json
+freebuff-live-*.json
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,145 @@
+# freebuff-mcp
+
+MCP bridge that lets OMP (or any MCP client) use the locally installed
+**Freebuff** CLI (`%USERPROFILE%\.config\manicode\freebuff.exe`, v0.2.36).
+
+Setup instructions: [INSTALL.md](INSTALL.md).
+
+Delegation policy: the managed skill `freebuff-mcp-default-coder`
+(`~/.omp/agent/managed-skills/freebuff-mcp-default-coder/SKILL.md`) makes this
+bridge the default coding engine for OMP on this machine until the user
+explicitly disables it.
+
+## Why a TUI bridge
+
+Freebuff is a Bun-compiled, Codebuff-based coding agent. Its only front end is a
+full-screen terminal UI — `freebuff --help` exposes no prompt/headless mode, and
+its HTTP surface (`/api/v1/freebuff/session`, `/api/v1/agent-runs`) is a
+client-driven agent protocol that expects a local tool runtime. Driving the real
+CLI keeps auth, model catalog, free-session accounting and the file-editing tools
+exactly as shipped.
+
+How the bridge works:
+
+1. Spawns the Freebuff binary inside a ConPTY (`pywinpty`), because the CLI falls
+   back to `CON` and would otherwise steal a console.
+2. Waits for the composer (`Enter a coding task or / for commands`), types the
+   prompt in small chunks, and presses Enter.
+3. Discovers the session folder Freebuff writes to
+   `~/.config/manicode/projects/<basename(cwd)>/chats/<timestamp>/` and polls
+   `log.jsonl` (`[send-message] …`, `Main prompt finished`) plus
+   `chat-messages.json` (`isComplete`) until the run ends.
+4. Returns the last assistant text block as `answer`; earlier text blocks are the
+   agent's reasoning. Tool calls come from the persisted `tool` blocks, so the
+   caller sees exactly what Freebuff read/ran.
+5. Kills the PTY process afterwards; the transcript stays on disk for
+   `freebuff_transcript` / `continue` (`chat_id`).
+
+The prompt written into the composer is verified against the `content` of the
+persisted user message; a mismatch fails loudly instead of silently running a
+mangled instruction.
+
+## Tools
+
+| Tool | Purpose |
+|---|---|
+| `freebuff_status` | version, account, configured mode/model, live instances, projects |
+| `freebuff_models` | live catalog: 12 models with keys, efforts, context windows, premium flags, current selection |
+| `freebuff_set_model` | `{model, effort?}` → persists the CLI model in `settings.json`, validated against the catalog |
+| `freebuff_run` | `{prompt, cwd?, chat_id?, model?, effort?, trust_agents?, timeout_seconds?, transcript_lines?}` → answer, reasoning, tool counts, credits, chat id, `session`, `model` |
+| `freebuff_chats` | list persisted chats for a working directory |
+| `freebuff_transcript` | read messages + tool calls of the newest or a given chat |
+
+## Changing the model
+
+- `freebuff_models` lists the keys (e.g. `m-096e75164d` = *DeepSeek V4.1 Flash Fast*),
+  the reasoning efforts each model supports, and which one is active.
+- `freebuff_set_model {"model": "flash fast", "effort": "low"}` resolves a key or a
+  unique name fragment, validates the effort, and writes `freebuffModel` +
+  `freebuffModelKey` (+ `freebuffReasoningEfforts`) into
+  `~/.config/manicode/settings.json`. The next run/TUI start picks it up.
+- `freebuff_run {"model": "SOLAR PRO"}` overrides the model for **one run only**:
+  the bridge snapshots `settings.json` into `freebuff-mcp-settings-snapshot.json`,
+  writes the override, runs the CLI, then restores the original bytes (or keeps a
+  newer value if the file changed meanwhile). A run killed mid-flight is repaired
+  on the next server start.
+- `freebuffModelKey` is authoritative; the label can drift (the shipped config
+  labels `m-8db1ccbba6` as `mimo/mimo-v2.5` but it is *DeepSeek V4.1 Flash*).
+
+## Install / run
+
+The venv already exists here:
+
+```
+C:\freebuff-mcp\.venv\Scripts\python.exe
+```
+
+Recreate it elsewhere with:
+
+```
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install pywinpty
+```
+
+Registered in `~/.omp/agent/mcp.json`:
+
+```json
+"freebuff": {
+  "type": "stdio",
+  "command": "C:/freebuff-mcp/.venv/Scripts/python.exe",
+  "args": ["C:/freebuff-mcp/server.py"],
+  "timeout": 0
+}
+```
+
+`timeout` is the client-side MCP request timeout in milliseconds, so it is `0`
+(disabled): a Freebuff run lasts minutes, and `freebuff_run` enforces its own
+`timeout_seconds` (default 900).
+
+Environment overrides: `FREEBUFF_EXE` (binary path), `FREEBUFF_CONFIG_DIR`
+(default `%USERPROFILE%\.config\manicode`).
+
+## Context model (what Freebuff sees)
+
+- Freebuff never sees the MCP client's conversation. It receives one prompt string,
+  then builds its own context from the **working directory** (`cwd`): file tree,
+  file reads, shell commands, and its own persisted chat when `chat_id` is
+  supplied. Verified: asked about files in a Laravel project, it read them with
+  `read_files`/`run_terminal_command` and answered correctly, while a fresh chat
+  asked about the caller's conversation correctly answered that it has no access.
+- The caller (OMP) pays tokens for the prompt plus whatever it reads back. Every
+  step Freebuff takes (initial context was ~20-25k tokens per run in testing) is
+  billed to Freebuff's own free session (`credits: 0`), which is the point of the
+  bridge.
+- Use `trust_agents: true` for repos that ship `.agents` files or `mcp.json`,
+  otherwise the CLI asks for trust and the run stalls.
+- Anything Freebuff changes lands directly in `cwd`: review the diff and run the
+  tests yourself before accepting the work.
+
+## Sessions
+
+Every `freebuff_run` preflights `freebuff-live-*.json` before spawning the CLI:
+
+- a record whose owner process is dead is deleted (`removed_stale`);
+- an unexpired lease with a live owner makes the run reuse that session
+  (`preflight_action: "reuse"`);
+- no usable lease (absent, or expired) starts a fresh session
+  (`preflight_action: "new"`); expired-but-live records are reported under
+  `ignored_stale` and never deleted, since their owner may renew them.
+
+The CLI mints and renews its own lease, so no manual restart is required between
+runs. `freebuff_status` returns the same data under `session`.
+
+## Notes and limits
+
+- One run at a time per server process; a second concurrent `freebuff_run` fails
+  fast instead of racing the CLI.
+- Prompts are flattened to a single line (a newline would submit early in the
+  composer).
+- Freebuff keys chats by the basename of the working directory, so two different
+  projects that share a folder name share history.
+- If another Freebuff window holds the live session, the CLI's "already running
+  elsewhere" prompt makes the bridge fail with that message instead of hijacking
+  the session.
+- Free mode is session-limited (the TUI shows `N hours remaining`); the bridge
+  surfaces the CLI's own screen when a session cannot start.
