@@ -98,7 +98,7 @@ mangled instruction.
 | `freebuff_status` | version, account, configured mode/model, live instances, projects |
 | `freebuff_models` | live catalog: 12 models with keys, efforts, context windows, premium flags, current selection |
 | `freebuff_set_model` | `{model, effort?}` → persists the CLI model in `settings.json`, validated against the catalog |
-| `freebuff_run` | `{prompt, cwd?, chat_id?, model?, effort?, trust_agents?, timeout_seconds?, transcript_lines?}` → answer, reasoning, tool counts, credits, chat id, `session`, `model` |
+| `freebuff_run` | `{prompt, cwd?, chat_id?, model?, effort?, trust_agents?, timeout_seconds?, transcript_lines?}` → answer, reasoning, tool counts, credits, chat id, `session`, `model`, `cost_confirmation` |
 | `freebuff_chats` | list persisted chats for a working directory |
 | `freebuff_transcript` | read messages + tool calls of the newest or a given chat |
 
@@ -258,7 +258,19 @@ bridge.
 - Anything Freebuff changes lands directly in `cwd`: review the diff and run the
   tests yourself before accepting the work.
 
-## Sessions
+## Sessions and wallet hours
+
+When the free session is exhausted, the CLI asks before spending paid balance:
+
+```
+DeepSeek V4.1 Flash Fast takes 3 hour from your balance. Uses 2 hours from your wallet.
+Enter: confirm and send
+```
+
+The bridge **auto-confirms** that prompt (presses Enter), records the sentence it
+saw, and returns it as `cost_confirmation: {auto_confirmed: true, notice: "..."}`.
+Each such run consumes wallet hours while `credits` stays `0`. Set the stop
+triggers in the skill if you want delegations to halt instead.
 
 Every `freebuff_run` preflights `freebuff-live-*.json` before spawning the CLI:
 

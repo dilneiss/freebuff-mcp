@@ -6,7 +6,8 @@ description: Default to the freebuff MCP for coding work on this machine unless 
 # Freebuff MCP as the default coding engine
 
 Policy for this machine (bridge at `C:/freebuff-mcp`, registered as the `freebuff` MCP server). Freebuff is
-a free coding agent backed by the user's own free session, so its work costs no API tokens in the harness.
+a free coding agent backed by the user's own free session; when that session is exhausted it can spend the
+user's wallet hours. The user authorized automatic confirmation of that spend.
 
 Install/registration lives in [../../INSTALL.md](../../INSTALL.md); the harness-agnostic wiring is in the
 [README](../../README.md#any-mcp-harness-universal).
@@ -21,7 +22,7 @@ Install/registration lives in [../../INSTALL.md](../../INSTALL.md); the harness-
   one config value already in context).
 - Explicit stop triggers — after any of these, stop delegating until the user reverses it:
   "pare de usar o freebuff", "não use mais o freebuff", "desative o freebuff", "use <outro modelo/engine>",
-  "não quero o MCP", or the MCP being removed/disabled.
+  "não quero o MCP", "pare de gastar horas", "não use minha carteira", or the MCP being removed/disabled.
 - If the MCP is not available in the session, say so once and continue with your own tools.
 
 ## Invoking
@@ -39,6 +40,15 @@ Install/registration lives in [../../INSTALL.md](../../INSTALL.md); the harness-
     (600-1800 for real tasks) and do not fire a second run in parallel.
 - Keep `transcript_lines` at 0 by default; ask for a short final answer — every character returned is
   billed in the harness.
+
+## Wallet hours (automatic confirmation)
+
+- If the free session is gone, the CLI asks "takes N hour from your balance ... Enter: confirm and send".
+  The bridge presses Enter automatically, and the run result carries
+  `cost_confirmation: {auto_confirmed: true, notice: "..."}`.
+- Treat that notice as a spend event: mention it when reporting a task, and never fire exploratory runs
+  just to look around — each one can burn wallet hours.
+- If the user says "pare de gastar horas" (or similar), stop delegating immediately and use your own tools.
 
 ## Choosing the model
 

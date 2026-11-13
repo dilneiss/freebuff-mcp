@@ -453,6 +453,7 @@ class TuiSession:
         self.cwd = cwd
         self.argv = argv or []
         self.buffer: list[str] = []
+        self.cost_notice: str | None = None
         self._lock = threading.Lock()
         self.proc = PtyProcess.spawn(
             [freebuff_binary(), *self.argv], cwd=str(cwd), dimensions=(rows, cols)
@@ -503,6 +504,37 @@ class TuiSession:
             "Freebuff prompt did not become ready within %ss.\n%s" % (timeout, self.tail())
         )
 
+    CONFIRM_MARKERS = ("confirm and send", "enter to confirm", "press enter to confirm")
+
+    def _cost_notice(self, screen: str) -> str | None:
+        """Pull the "takes N hours from your balance" sentence out of the TUI dump."""
+        low = screen.lower()
+        start = low.find("takes")
+        if start == -1:
+            start = low.find("from your wallet")
+            if start == -1:
+                start = low.find("from your balance")
+            if start == -1:
+                return None
+            start = max(0, start - 90)
+        window = screen[max(0, start - 90) : start + 260]
+        window = re.split(r"(?:Enter:|Esc:|\x1b)", window)[0]
+        text = " ".join(window.split())
+        text = re.sub(r"[^\w\s.\-:,/%+()]", "", text).strip(" -:/")
+        return text[:200] or None
+
+    def confirm_pending_cost(self) -> bool:
+        """Press Enter on the CLI's "spend wallet hours?" prompt, if present."""
+        screen = self.screen()
+        low = screen.lower()
+        if not any(marker in low for marker in self.CONFIRM_MARKERS):
+            return False
+        notice = self._cost_notice(screen) or "wallet-hours confirmation"
+        self.cost_notice = notice
+        log(f"auto-confirming wallet cost: {notice}")
+        self.proc.write("\r")
+        return True
+
     def type_prompt(self, prompt: str) -> None:
         # The composer submits on Enter; a literal newline would split the paste
         # into a premature submit, so multi-line prompts are flattened.
@@ -514,6 +546,14 @@ class TuiSession:
             time.sleep(self.TYPING_DELAY)
         time.sleep(0.5)
         self.proc.write("\r")
+
+        # Free session exhausted => CLI asks to spend wallet hours before sending.
+        # The user enabled automatic confirmation, so answer that prompt and
+        # record what it said.
+        for _ in range(8):
+            time.sleep(0.5)
+            if self.confirm_pending_cost():
+                break
 
     def close(self) -> None:
         for _ in range(2):
@@ -783,6 +823,8 @@ def tool_run(args: dict) -> dict:
                 if new:
                     chat = new[-1]
                     break
+                # The spend-wallet-hours prompt can appear a beat after Enter.
+                session.confirm_pending_cost()
                 if session.proc.exitstatus is not None:
                     raise FreebuffError("Freebuff exited before starting a chat.\n" + session.tail())
                 time.sleep(0.5)
@@ -818,6 +860,10 @@ def tool_run(args: dict) -> dict:
             "cwd": str(cwd),
             "project": project.name,
             "elapsed_seconds": round(time.time() - started, 1),
+            "cost_confirmation": {
+                "auto_confirmed": bool(session.cost_notice),
+                "notice": session.cost_notice,
+            },
             "session": {
                 "preflight_action": preflight["action"],
                 "reused": preflight["active"],
