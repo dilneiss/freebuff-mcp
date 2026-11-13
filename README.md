@@ -5,10 +5,9 @@ MCP bridge that lets OMP (or any MCP client) use the locally installed
 
 Setup instructions: [INSTALL.md](INSTALL.md).
 
-Delegation policy: the managed skill `freebuff-mcp-default-coder`
-(`~/.omp/agent/managed-skills/freebuff-mcp-default-coder/SKILL.md`) makes this
-bridge the default coding engine for OMP on this machine until the user
-explicitly disables it.
+Delegation policy: [skills/freebuff-mcp-default-coder/SKILL.md](skills/freebuff-mcp-default-coder/SKILL.md)
+makes this bridge the default coding engine until the user explicitly disables
+it. OMP loads it from `~/.omp/agent/managed-skills/freebuff-mcp-default-coder/SKILL.md`.
 
 ## Why a TUI bridge
 
@@ -98,6 +97,56 @@ Registered in `~/.omp/agent/mcp.json`:
 
 Environment overrides: `FREEBUFF_EXE` (binary path), `FREEBUFF_CONFIG_DIR`
 (default `%USERPROFILE%\.config\manicode`).
+
+## Any MCP harness (universal)
+
+The bridge is a plain MCP **stdio** server: newline-delimited JSON-RPC 2.0,
+`initialize` → `tools/list` → `tools/call`, tools only (no prompts, resources,
+OAuth or HTTP transport). Any harness that can launch a local MCP server with a
+command and arguments can use it — nothing here is OMP-specific except the
+example config in [INSTALL.md](INSTALL.md).
+
+- command: `C:/freebuff-mcp/.venv/Scripts/python.exe`
+- args: `["C:/freebuff-mcp/server.py"]`
+- environment: none required (`FREEBUFF_EXE`, `FREEBUFF_CONFIG_DIR`, `FREEBUFF_API_BASE` optional)
+
+| Harness | Where to declare it |
+|---|---|
+| OMP | `~/.omp/agent/mcp.json` — verified end to end by this repo |
+| Claude Code | `claude mcp add freebuff -- C:/freebuff-mcp/.venv/Scripts/python.exe C:/freebuff-mcp/server.py`, or `.mcp.json` |
+| Claude Desktop | `%APPDATA%\Claude\claude_desktop_config.json` |
+| OpenAI Codex CLI | `~/.codex/config.toml` → `[mcp_servers.freebuff]` |
+| Gemini CLI | `~/.gemini/settings.json` → `mcpServers` |
+| Qwen Code | `~/.qwen/settings.json` → `mcpServers` |
+| Cursor | `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` |
+| VS Code (Copilot agent mode) | `.vscode/mcp.json` |
+| Cline | extension MCP settings (stdio server) |
+| Roo Code | extension MCP settings (stdio server) |
+| Continue | `config.yaml` → `mcpServers` |
+| Zed | `settings.json` → `context_servers` |
+| Goose | `~/.config/goose/config.yaml` (stdio extension) |
+| OpenCode | `opencode.json` → `mcp` |
+| OpenHands | `config.toml` |
+| Kiro, Trae, Qoder | app-managed MCP settings (stdio command + args) |
+| MCP Inspector | `npx @modelcontextprotocol/inspector` (debugging) |
+
+Check the exact key names in each harness' documentation; the server itself only
+needs the command, the argument and permission to run tools.
+
+Two settings matter everywhere:
+
+- **Allow long-running tool calls.** A run lasts minutes; a 60 s per-request
+  timeout aborts it mid-flight. On OMP set `"timeout": 0`; elsewhere raise or
+  disable the tool-call timeout.
+- **One run at a time.** The bridge serializes calls inside one server process,
+  but two harnesses each spawning their own server would compete for the same
+  Freebuff session.
+
+The delegation skill is versioned here as
+[`skills/freebuff-mcp-default-coder/SKILL.md`](skills/freebuff-mcp-default-coder/SKILL.md).
+Its body is harness-agnostic; copy it into the skill directory your loader reads
+(OMP managed skills, Claude Code `.claude/skills`, or your own prompt library).
 
 ## Context model (what Freebuff sees)
 
