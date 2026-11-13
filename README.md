@@ -148,6 +148,46 @@ The delegation skill is versioned here as
 Its body is harness-agnostic; copy it into the skill directory your loader reads
 (OMP managed skills, Claude Code `.claude/skills`, or your own prompt library).
 
+## Token economy (measured)
+
+The bridge exists to move work off the harness' token budget. Numbers below come
+from real runs logged by the CLI on this machine: `data.contextTokenCount` in
+each chat's `log.jsonl`, and prompt/answer sizes from `chat-messages.json`
+(tokens estimated as chars / 4).
+
+| Delegated task | Harness round trip | Freebuff-side context | Harness pays | Savings vs in-harness |
+|---|---|---|---|---|
+| Repo Q&A (3 facts, 2 steps) | 272 + 304 chars ≈ 144 tok | 24,952 tok | 0.6% | ≈ 99% |
+| 20 unit tests, 181 lines, 17 steps | 844 + 449 chars ≈ 323 tok | 43,106 tok | 0.75% | ≈ 99% |
+| Small single-file change (needs a read) | ≈ 150-250 tok | ≈ 20-25k tok (mostly fixed overhead) | ≈ 1% | ≈ 90-95% vs writing it yourself |
+
+**Expected: ~95-99% fewer harness tokens per delegated task, and ~0% for a
+one-line edit** (there the round trip costs more than doing it directly).
+
+The in-harness baseline uses the agent's own context as a conservative proxy: a
+real in-harness run re-sends that context on every step, so it normally costs
+more, not less.
+
+How the number is computed:
+
+```
+savings ≈ 1 - (prompt + answer + verification) / (context the harness would rebuild itself)
+```
+
+- The agent-side context — system prompt, tool schemas, file reads, iterations —
+  is paid by Freebuff's free session: every run reports `credits: 0`. It never
+  reaches your API bill.
+- The harness pays only the one-line brief, the short answer, and verification.
+  Budget ≈ 1-3k tokens per task to read the diff and run the tests; that is the
+  honest price of trusting the result.
+- `transcript_lines` puts the agent's whole transcript back into harness context:
+  keep it at 0 unless debugging.
+
+Caveats: the free tier is session-limited (minutes, not tokens), premium models
+need full mode, and delegating an edit you already have in context is a net loss.
+Savings are per delegated task, not a reason to send everything through the
+bridge.
+
 ## Context model (what Freebuff sees)
 
 - Freebuff never sees the MCP client's conversation. It receives one prompt string,
@@ -157,9 +197,9 @@ Its body is harness-agnostic; copy it into the skill directory your loader reads
   `read_files`/`run_terminal_command` and answered correctly, while a fresh chat
   asked about the caller's conversation correctly answered that it has no access.
 - The caller (OMP) pays tokens for the prompt plus whatever it reads back. Every
-  step Freebuff takes (initial context was ~20-25k tokens per run in testing) is
-  billed to Freebuff's own free session (`credits: 0`), which is the point of the
-  bridge.
+  step Freebuff takes (19.5k-43k tokens of context per run in testing) is billed
+  to Freebuff's own free session (`credits: 0`), which is the point of the
+  bridge — see [Token economy](#token-economy-measured).
 - Use `trust_agents: true` for repos that ship `.agents` files or `mcp.json`,
   otherwise the CLI asks for trust and the run stalls.
 - Anything Freebuff changes lands directly in `cwd`: review the diff and run the
