@@ -541,10 +541,15 @@ class TuiSession:
         text = " ".join(line.strip() for line in prompt.splitlines() if line.strip())
         if not text:
             raise FreebuffError("Prompt is empty after normalization.")
-        for start in range(0, len(text), self.TYPING_CHUNK):
-            self.proc.write(text[start : start + self.TYPING_CHUNK])
-            time.sleep(self.TYPING_DELAY)
-        time.sleep(0.5)
+        # Long prompts get dropped by the TUI's input handling when written too
+        # fast (observed: ~1.4k chars truncated mid-word), so type them slower.
+        length = len(text)
+        chunk = 16 if length > 800 else self.TYPING_CHUNK
+        delay = 0.03 if length > 800 else self.TYPING_DELAY
+        for start in range(0, length, chunk):
+            self.proc.write(text[start : start + chunk])
+            time.sleep(delay)
+        time.sleep(0.8)
         self.proc.write("\r")
 
         # Free session exhausted => CLI asks to spend wallet hours before sending.
